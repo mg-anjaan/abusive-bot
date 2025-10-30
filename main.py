@@ -5,26 +5,33 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.client.default import DefaultBotProperties
 
+# ===================================================
+# 🔐 BOT TOKEN FROM ENVIRONMENT
+# ===================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-dp = Dispatcher(storage=MemoryStorage())
-bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
 
-# =====================================
-# 🧩 1️⃣  FULL ABUSIVE / OFFENSIVE WORD LIST
-# =====================================
+# Dispatcher and Bot setup (Aiogram 3.13 compatible)
+dp = Dispatcher(storage=MemoryStorage())
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+
+# ===================================================
+# 🚫 FULL LIST OF ABUSIVE / OFFENSIVE WORDS
+# ===================================================
 ABUSIVE_WORDS = {
-    # HINDI + HINGLISH
+    # Hindi + Hinglish
     "chutiya", "chutiye", "madarchod", "madharchod", "behenchod", "bhenchod",
-    "bhosdike", "bhosadi", "bhosdika", "gandu", "gaand", "lund", "lunde", "randi",
-    "runda", "randii", "rundi", "kamina", "kaminey", "kamini", "kuttiya", "kutti",
-    "kutte", "kuttey", "haraami", "harami", "chakka", "chodu", "chod", "chudai",
-    "jhant", "jhantu", "tatti", "saala", "saale", "saali", "raand", "rakhail",
-    "randiya", "behenchod", "maa", "maa-chod", "maderchod", "madarchod",
+    "bhosdike", "bhosadi", "bhosdika", "gandu", "gaand", "lund", "randi",
+    "randii", "rundi", "kamina", "kaminey", "kamini", "kuttiya", "kutti",
+    "haraami", "harami", "chakka", "chodu", "chod", "chudai", "jhant", "jhantu",
+    "tatti", "saala", "saale", "saali", "raand", "rakhail", "maa-chod", "maderchod",
     "bhosda", "gandmara", "gandfat", "lundchod", "lundmar", "randwa",
-    # Short forms
-    "mc", "bc", "b c", "m c",
-    # ENGLISH
+    "mc", "bc", "m c", "b c",
+    # English
     "fuck", "fucked", "fucking", "motherfucker", "mf", "fuk", "fuker", "fcker",
     "bitch", "bitches", "whore", "slut", "hoe", "asshole", "dick", "cock",
     "pussy", "cunt", "bastard", "shit", "jerk", "fag", "faggot", "porn",
@@ -34,9 +41,9 @@ ABUSIVE_WORDS = {
 # ✅ Non-abusive short forms to ignore
 WHITELIST = {"bcz", "because", "becoz", "bcoz", "abc", "bce", "bcg", "bcom", "mcq"}
 
-# =====================================
-# 🧠 2️⃣  NORMALIZATION LOGIC
-# =====================================
+# ===================================================
+# 🔍 TEXT NORMALIZATION + DETECTION
+# ===================================================
 LEET_MAP = {
     "4": "a", "@": "a", "3": "e", "1": "i", "!": "i", "0": "o",
     "5": "s", "$": "s", "7": "t", "8": "b", "9": "g", "2": "z"
@@ -63,13 +70,16 @@ def contains_abuse(text: str):
                 return bad
     return None
 
-# =====================================
-# ⚙️ 3️⃣  HANDLERS
-# =====================================
+# ===================================================
+# ⚙️  HANDLERS
+# ===================================================
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     await message.answer(
-        "🚫 I detect abusive words (Hindi + English) and mute users permanently.\nAdmins are ignored."
+        "🤖 <b>Abuse Guard Active!</b>\n"
+        "I auto-delete abusive or offensive messages (Hindi + English)\n"
+        "and permanently mute that user.\n\n"
+        "🛡 Admins are ignored."
     )
 
 @dp.message()
@@ -89,13 +99,13 @@ async def detect_abuse(message: types.Message):
     if member.status in ["administrator", "creator"]:
         return
 
-    # Delete message
+    # Delete the abusive message
     try:
         await message.delete()
     except:
         pass
 
-    # Mute permanently
+    # Permanently mute user
     try:
         await bot.restrict_chat_member(
             message.chat.id,
@@ -103,11 +113,15 @@ async def detect_abuse(message: types.Message):
             permissions=types.ChatPermissions(can_send_messages=False)
         )
         await message.answer(
-            f"🚨 <b>{message.from_user.full_name}</b> was muted permanently for abusive language (<code>{bad}</code>)."
+            f"🚨 <b>{message.from_user.full_name}</b> was muted permanently "
+            f"for abusive language (<code>{bad}</code>)."
         )
     except Exception as e:
         print("Mute failed:", e)
 
+# ===================================================
+# 🚀 START BOT
+# ===================================================
 async def main():
     if not BOT_TOKEN:
         print("❌ BOT_TOKEN not found in environment!")
