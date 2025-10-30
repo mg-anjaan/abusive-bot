@@ -1,6 +1,4 @@
 import os
-import asyncio
-from aiogram import os
 import re
 import asyncio
 from aiogram import Bot, Dispatcher, types
@@ -17,29 +15,24 @@ bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
 # =====================================
 ABUSIVE_WORDS = {
     # HINDI + HINGLISH
-    "chutiya", "chutiye", "chutiyaa", "madarchod", "madharchod", "behenchod", "bhenchod",
+    "chutiya", "chutiye", "madarchod", "madharchod", "behenchod", "bhenchod",
     "bhosdike", "bhosadi", "bhosdika", "gandu", "gaand", "lund", "lunde", "randi",
-    "runda", "randii", "rundi", "rund", "kamina", "kaminey", "kamini", "kuttiya", "kutti",
-    "kutte", "kuttey", "haraami", "harami", "chakka", "chodu", "chod", "chudai", "chudaiya",
-    "jhant", "jhantu", "tatti", "kutta", "saala", "saale", "saali", "raand", "rakhail",
-    "randiya", "rundii", "behenchod", "maa", "maa-chod", "maderchod", "madarchod",
-    "bhosda", "bhosdaap", "gandmara", "gandu", "gandfat", "lundchod", "lundkha", "lundmar",
-    "kutta", "kutti", "kuttiya", "kutte", "kuttey", "randi", "randwa",
+    "runda", "randii", "rundi", "kamina", "kaminey", "kamini", "kuttiya", "kutti",
+    "kutte", "kuttey", "haraami", "harami", "chakka", "chodu", "chod", "chudai",
+    "jhant", "jhantu", "tatti", "saala", "saale", "saali", "raand", "rakhail",
+    "randiya", "behenchod", "maa", "maa-chod", "maderchod", "madarchod",
+    "bhosda", "gandmara", "gandfat", "lundchod", "lundmar", "randwa",
     # Short forms
     "mc", "bc", "b c", "m c",
     # ENGLISH
     "fuck", "fucked", "fucking", "motherfucker", "mf", "fuk", "fuker", "fcker",
-    "bitch", "bitches", "bitchy", "whore", "slut", "sluts", "hoe", "hoes",
-    "ass", "asses", "asshole", "dick", "dicks", "dickhead", "cock", "cocks",
-    "pussy", "cunt", "bastard", "bastards", "shit", "shitty", "jerk", "jerkoff",
-    "fag", "faggot", "gayfuck", "retard", "nude", "porn", "porno", "horny",
-    "boobs", "tits", "nipple", "breast", "suck", "sucking", "dildo", "orgasm", "sex",
+    "bitch", "bitches", "whore", "slut", "hoe", "asshole", "dick", "cock",
+    "pussy", "cunt", "bastard", "shit", "jerk", "fag", "faggot", "porn",
+    "boobs", "tits", "nipple", "breast", "suck", "dildo", "sex",
 }
 
-# ✅ Non-abusive short forms we should ignore
-WHITELIST = {
-    "bcz", "because", "becoz", "bcoz", "abc", "bce", "bcg", "bcom", "mca", "mcq"
-}
+# ✅ Non-abusive short forms to ignore
+WHITELIST = {"bcz", "because", "becoz", "bcoz", "abc", "bce", "bcg", "bcom", "mcq"}
 
 # =====================================
 # 🧠 2️⃣  NORMALIZATION LOGIC
@@ -75,7 +68,9 @@ def contains_abuse(text: str):
 # =====================================
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
-    await message.answer("🚫 I detect abusive words (Hindi + English) and mute users permanently.\nAdmins are ignored.")
+    await message.answer(
+        "🚫 I detect abusive words (Hindi + English) and mute users permanently.\nAdmins are ignored."
+    )
 
 @dp.message()
 async def detect_abuse(message: types.Message):
