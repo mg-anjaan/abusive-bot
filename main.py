@@ -6,75 +6,18 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
 
+# ---------------------- BOT SETUP ----------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise ValueError("❌ BOT_TOKEN not found! Set it in Railway environment variables.")
 
-# --- Comprehensive abusive / offensive / sexual slang list (Hindi + English) ---
-ABUSIVE_WORDS = {
-    # Hindi / Hinglish
-    "chutiya","chutiye","chu*tiya","chut","madarchod","madharchod","madarchd",
-    "behenchod","bhenchod","bhosdike","bhosadi","bhosdika","gandu","gaand","lund",
-    "lavde","lavda","lavdoo","loda","randi","randii","rundi","rundii","kamina","kaminey","kamini",
-    "kuttiya","kutti","haraami","harami","haramzada","haramzade","haramkhor",
-    "chakka","chodu","chod","chudai","jhant","jhantu","tatti","saala","saale","saali",
-    "raand","rakhail","maa-chod","maderchod","bhosda","gandmara","gandfat",
-    "lundchod","lundmar","randwa","mc","bc","m c","b c","choot","chootiya",
-    "ch0d","g@nd","l*nd","r@ndi","randee","gand@", "kutta","kutte","kutti","kuttiya",
-    "rakhail","kamchor","ullu","ullu ke pathe","haram","bhosda","chakkar",
-    "r@nd", "rand@","mad@rch0d","m@darchod","bh0sdike","m@derchod","bhos@di",
-    "lund@", "gandu@", "b@stard","loda","chodna","chodne","chuda","chudi","chudwa",
-    "chudti","chudega","chudegi","chodta","choda","chodi","chudaye","chudayega",
-    "ma ki chut","behen ki chut","maa ka bhosda","maa ka lund",
-    # English / Offensive / Sexual
-    "fuck","fucked","fucking","motherfucker","mf","fuk","fuker","fcker",
-    "bitch","bitches","whore","slut","hoe","asshole","dick","cock","pussy",
-    "cunt","bastard","shit","jerk","fag","faggot","porn","boobs","boob","tits",
-    "nipple","breast","suck","dildo","sex","sexual","nude","naked","vagina",
-    "penis","anal","hentai","xvideos","xnxx","xhamster","pornhub","redtube",
-    "sperm","cum","ejaculate","masturbate","masturbation","blowjob","handjob",
-    "fuckboy","fuckgirl","pussyy","d1ck","p3nis","p0rn","s3x","boobies",
-    "titty","boobie","a$$","b!tch","f@ck","d!ck","p@rn","s3xy","horny",
-    "deepthroat","69","p0rn0","p0rno","sexy","fck","c0ck","c@ck","s@x",
-    "b@ng","creampie","escort","hooker","stripper","fetish","lust","orgasm",
-    "threesome","n1pple","t1ts","b@bs","hornyy","sexting","kamasutra","v!rgin",
-    "virginity","milf","gilf","teen","stepmom","stepsis","incest","bj","hj",
-    "anal","doggy","missionary","cumshot","facial","suckoff","handy","lapdance",
-    "eros","boobjob","bang","rape","rapist","molest","slutty","nakedgirl",
-    "sexyvideo","xrated","p0rnhub","tiktokporn","erotic","pornstar",
-}
-
-# --- Avoid false positives ---
-SAFE_WORDS = {"chutney","shortcut","pitch","assistant","class","pass","cocktail","bass","grass","asset"}
-
-# --- Regex builder to detect variations (g@nd, l*nd, etc.) ---
-def build_pattern(word):
-    word = re.escape(word)
-    word = word.replace("\\*", "[^a-zA-Z0-9]{0,2}").replace("\\@", "a").replace("0","o")
-    pattern = ""
-    for ch in word:
-        if ch.isalpha():
-            pattern += f"[{ch}{ch.upper()}]+[^a-zA-Z0-9_]*"
-        else:
-            pattern += re.escape(ch)
-    return pattern
-
-ABUSE_REGEX = re.compile("|".join(build_pattern(w) for w in ABUSIVE_WORDS), re.IGNORECASE)
-
-def is_abusive(text: str) -> bool:
-    if not text:
-        return False
-    txt = text.lower()
-    if any(safe in txt for safe in SAFE_WORDS):
-        return False
-    return bool(ABUSE_REGEX.search(txt))
-
-# --- Bot setup ---
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher()
 
-# --- /start command ---
+# ---------------------- START COMMAND ----------------------
 @dp.message(CommandStart())
 async def start_command(message: types.Message):
     await message.answer(
@@ -86,42 +29,93 @@ async def start_command(message: types.Message):
         "Let's keep the chat peaceful and friendly! 💬✨"
     )
 
-# --- Message monitor ---
+# ---------------------- ABUSIVE WORD LIST ----------------------
+hindi_words = [
+    "chutiya","madarchod","bhosdike","lund","gand","gaand","randi","behenchod","betichod","mc","bc",
+    "lodu","lavde","harami","kutte","kamina","rakhail","randwa","suar","dogla","saala","tatti","chod",
+    "chodne","rundi","bhadwe","nalayak","kamine","chinal","bhand","bhen ke","maa ke","behn ke","gandu",
+    "chodna","choot","chut","chutmarike","chutiyapa","hijda","meetha","launda","laundiya","lavda","bevda",
+    "nashedi","raand","kutti","kuttiya","haramzada","haramzadi","bhosri","bhosriwali","rand","mehnchod"
+]
+
+english_words = [
+    "fuck","fucking","motherfucker","bitch","asshole","slut","porn","dick","pussy","sex","boobs","cock",
+    "suck","fucker","whore","bastard","jerk","hoe","pervert","screwed","scumbag","balls","blowjob",
+    "handjob","cum","sperm","vagina","dildo","horny","bang","banging","anal","nude","nsfw","shit","damn",
+    "dumbass","retard","piss","douche","milf","boob","ass","booby","breast","naked","deepthroat","suckmy",
+    "gay","lesbian","trans","blow","spank","fetish","orgasm","wetdream","masturbate","moan","ejaculate",
+    "strip","whack","nipple","cumshot","lick","spitroast","tits","tit","hooker","escort","prostitute",
+    "blowme","wanker","screw","bollocks","piss","bugger","slag","trollop","arse","arsehole","goddamn",
+    "shithead","horniness"
+]
+
+# ---------------------- PHRASE DETECTION LIST ----------------------
+phrases = [
+    "send nudes","horny dm","let's have sex","i am horny","want to fuck",
+    "boobs pics","let’s bang","video call nude","send pic without cloth",
+    "suck my","blow me","deep throat","show tits","open boobs","send nude",
+    "you are hot send pic","show your body","let's do sex","horny girl","horny boy",
+    "come to bed","nude video call","i want sex","let me fuck","sex chat","do sex with me",
+    "send xxx","share porn","watch porn together","send your nude"
+]
+
+# ---------------------- PATTERN BUILDER ----------------------
+def build_pattern(words):
+    safe = []
+    for w in words:
+        w = re.escape(w)
+        w = (
+            w.replace("a", "[a@4]")
+             .replace("i", "[i1!|]")
+             .replace("o", "[o0]")
+             .replace("e", "[e3]")
+             .replace("u", "[u*]")
+        )
+        safe.append(w)
+    return r"\b(?:" + "|".join(safe) + r")\b"
+
+abuse_pattern = re.compile(build_pattern(hindi_words + english_words), re.IGNORECASE)
+phrase_pattern = re.compile(build_pattern(phrases), re.IGNORECASE)
+
+# ---------------------- MESSAGE HANDLER ----------------------
 @dp.message()
 async def detect_abuse(message: types.Message):
-    if message.chat.type not in ["group","supergroup"]:
-        return
-    if not message.from_user:
+    if message.chat.type not in ["group", "supergroup"]:
         return
 
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    member = await bot.get_chat_member(chat_id, user_id)
-    if member.status in ["administrator","creator"]:
+    text = (message.text or "").lower()
+
+    # Skip admins
+    try:
+        member = await message.chat.get_member(message.from_user.id)
+        if member.status in ("administrator", "creator"):
+            return
+    except Exception:
         return
 
-    text = message.text or message.caption or ""
-    if is_abusive(text):
+    # Detect abusive words or phrases
+    if abuse_pattern.search(text) or phrase_pattern.search(text):
         try:
-            await bot.delete_message(chat_id, message.message_id)
-            await bot.restrict_chat_member(
-                chat_id,
-                user_id,
+            await message.delete()
+        except Exception:
+            pass
+
+        try:
+            await message.chat.restrict(
+                message.from_user.id,
                 permissions=types.ChatPermissions(can_send_messages=False)
             )
             await message.answer(
-                f"🚫 <b>{message.from_user.first_name}</b> was muted permanently for using abusive or offensive words."
+                f"🚫 <b>{message.from_user.first_name}</b> was muted permanently for using abusive/offensive language."
             )
-        except Exception as e:
-            print(f"Error: {e}")
+        except Exception:
+            pass
 
-# --- Main ---
+# ---------------------- RUN BOT ----------------------
 async def main():
-    if not BOT_TOKEN:
-        print("❌ BOT_TOKEN missing in environment variables!")
-        return
     print("🤖 Bot started successfully and watching for abuses...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+
