@@ -4,6 +4,7 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import CommandStart
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -66,18 +67,33 @@ def is_abusive(text: str) -> bool:
         return False
     return bool(ABUSE_REGEX.search(txt))
 
+# --- Bot setup ---
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher()
 
+# --- /start command ---
+@dp.message(CommandStart())
+async def start_command(message: types.Message):
+    await message.answer(
+        f"🤖 <b>Group Guardian Activated!</b>\n\n"
+        f"Hello <b>{message.from_user.first_name}</b> 👋\n"
+        "I'm here to keep this group clean and respectful.\n\n"
+        "🚫 I instantly delete abusive, vulgar, or offensive messages.\n"
+        "🔇 Offenders are muted permanently.\n\n"
+        "Let's keep the chat peaceful and friendly! 💬✨"
+    )
+
+# --- Message monitor ---
 @dp.message()
 async def detect_abuse(message: types.Message):
     if message.chat.type not in ["group","supergroup"]:
         return
     if not message.from_user:
         return
+
     user_id = message.from_user.id
     chat_id = message.chat.id
     member = await bot.get_chat_member(chat_id, user_id)
@@ -99,6 +115,7 @@ async def detect_abuse(message: types.Message):
         except Exception as e:
             print(f"Error: {e}")
 
+# --- Main ---
 async def main():
     if not BOT_TOKEN:
         print("❌ BOT_TOKEN missing in environment variables!")
@@ -108,4 +125,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
