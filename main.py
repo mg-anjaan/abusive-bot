@@ -3,129 +3,107 @@ import re
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 
-# ===================================================
-# 🔐 BOT TOKEN FROM ENVIRONMENT
-# ===================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Dispatcher and Bot setup (Aiogram 3.13 compatible)
-dp = Dispatcher(storage=MemoryStorage())
+# --- Comprehensive abusive / offensive / sexual slang list (Hindi + English) ---
+ABUSIVE_WORDS = {
+    # Hindi / Hinglish
+    "chutiya","chutiye","chu*tiya","chut","madarchod","madharchod","madarchd",
+    "behenchod","bhenchod","bhosdike","bhosadi","bhosdika","gandu","gaand","lund",
+    "lavde","lavda","lavdoo","loda","randi","randii","rundi","rundii","kamina","kaminey","kamini",
+    "kuttiya","kutti","haraami","harami","haramzada","haramzade","haramkhor",
+    "chakka","chodu","chod","chudai","jhant","jhantu","tatti","saala","saale","saali",
+    "raand","rakhail","maa-chod","maderchod","bhosda","gandmara","gandfat",
+    "lundchod","lundmar","randwa","mc","bc","m c","b c","choot","chootiya",
+    "ch0d","g@nd","l*nd","r@ndi","randee","gand@", "kutta","kutte","kutti","kuttiya",
+    "rakhail","kamchor","ullu","ullu ke pathe","haram","bhosda","chakkar",
+    "r@nd", "rand@","mad@rch0d","m@darchod","bh0sdike","m@derchod","bhos@di",
+    "lund@", "gandu@", "b@stard","loda","chodna","chodne","chuda","chudi","chudwa",
+    "chudti","chudega","chudegi","chodta","choda","chodi","chudaye","chudayega",
+    "ma ki chut","behen ki chut","maa ka bhosda","maa ka lund",
+    # English / Offensive / Sexual
+    "fuck","fucked","fucking","motherfucker","mf","fuk","fuker","fcker",
+    "bitch","bitches","whore","slut","hoe","asshole","dick","cock","pussy",
+    "cunt","bastard","shit","jerk","fag","faggot","porn","boobs","boob","tits",
+    "nipple","breast","suck","dildo","sex","sexual","nude","naked","vagina",
+    "penis","anal","hentai","xvideos","xnxx","xhamster","pornhub","redtube",
+    "sperm","cum","ejaculate","masturbate","masturbation","blowjob","handjob",
+    "fuckboy","fuckgirl","pussyy","d1ck","p3nis","p0rn","s3x","boobies",
+    "titty","boobie","a$$","b!tch","f@ck","d!ck","p@rn","s3xy","horny",
+    "deepthroat","69","p0rn0","p0rno","sexy","fck","c0ck","c@ck","s@x",
+    "b@ng","creampie","escort","hooker","stripper","fetish","lust","orgasm",
+    "threesome","n1pple","t1ts","b@bs","hornyy","sexting","kamasutra","v!rgin",
+    "virginity","milf","gilf","teen","stepmom","stepsis","incest","bj","hj",
+    "anal","doggy","missionary","cumshot","facial","suckoff","handy","lapdance",
+    "eros","boobjob","bang","rape","rapist","molest","slutty","nakedgirl",
+    "sexyvideo","xrated","p0rnhub","tiktokporn","erotic","pornstar",
+}
+
+# --- Avoid false positives ---
+SAFE_WORDS = {"chutney","shortcut","pitch","assistant","class","pass","cocktail","bass","grass","asset"}
+
+# --- Regex builder to detect variations (g@nd, l*nd, etc.) ---
+def build_pattern(word):
+    word = re.escape(word)
+    word = word.replace("\\*", "[^a-zA-Z0-9]{0,2}").replace("\\@", "a").replace("0","o")
+    pattern = ""
+    for ch in word:
+        if ch.isalpha():
+            pattern += f"[{ch}{ch.upper()}]+[^a-zA-Z0-9_]*"
+        else:
+            pattern += re.escape(ch)
+    return pattern
+
+ABUSE_REGEX = re.compile("|".join(build_pattern(w) for w in ABUSIVE_WORDS), re.IGNORECASE)
+
+def is_abusive(text: str) -> bool:
+    if not text:
+        return False
+    txt = text.lower()
+    if any(safe in txt for safe in SAFE_WORDS):
+        return False
+    return bool(ABUSE_REGEX.search(txt))
+
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
-
-# ===================================================
-# 🚫 FULL LIST OF ABUSIVE / OFFENSIVE WORDS
-# ===================================================
-ABUSIVE_WORDS = {
-    # Hindi + Hinglish
-    "chutiya", "chutiye", "madarchod", "madharchod", "behenchod", "bhenchod",
-    "bhosdike", "bhosadi", "bhosdika", "gandu", "gaand", "lund", "randi",
-    "randii", "rundi", "kamina", "kaminey", "kamini", "kuttiya", "kutti",
-    "haraami", "harami", "chakka", "chodu", "chod", "chudai", "jhant", "jhantu",
-    "tatti", "saala", "saale", "saali", "raand", "rakhail", "maa-chod", "maderchod",
-    "bhosda", "gandmara", "gandfat", "lundchod", "lundmar", "randwa",
-    "mc", "bc", "m c", "b c",
-    # English
-    "fuck", "fucked", "fucking", "motherfucker", "mf", "fuk", "fuker", "fcker",
-    "bitch", "bitches", "whore", "slut", "hoe", "asshole", "dick", "cock",
-    "pussy", "cunt", "bastard", "shit", "jerk", "fag", "faggot", "porn",
-    "boobs", "tits", "nipple", "breast", "suck", "dildo", "sex",
-}
-
-# ✅ Non-abusive short forms to ignore
-WHITELIST = {"bcz", "because", "becoz", "bcoz", "abc", "bce", "bcg", "bcom", "mcq"}
-
-# ===================================================
-# 🔍 TEXT NORMALIZATION + DETECTION
-# ===================================================
-LEET_MAP = {
-    "4": "a", "@": "a", "3": "e", "1": "i", "!": "i", "0": "o",
-    "5": "s", "$": "s", "7": "t", "8": "b", "9": "g", "2": "z"
-}
-
-def normalize(text: str) -> str:
-    text = text.lower()
-    for k, v in LEET_MAP.items():
-        text = text.replace(k, v)
-    text = re.sub(r'[^a-z0-9\s]', '', text)
-    text = re.sub(r'(.)\1+', r'\1', text)
-    return text
-
-def contains_abuse(text: str):
-    norm = normalize(text)
-    tokens = norm.split()
-    for token in tokens:
-        if token in WHITELIST:
-            continue
-        if token in ABUSIVE_WORDS:
-            return token
-        for bad in ABUSIVE_WORDS:
-            if len(bad) >= 3 and bad in token:
-                return bad
-    return None
-
-# ===================================================
-# ⚙️  HANDLERS
-# ===================================================
-@dp.message(CommandStart())
-async def start_cmd(message: types.Message):
-    await message.answer(
-        "🤖 <b>Abuse Guard Active!</b>\n"
-        "I auto-delete abusive or offensive messages (Hindi + English)\n"
-        "and permanently mute that user.\n\n"
-        "🛡 Admins are ignored."
-    )
+dp = Dispatcher()
 
 @dp.message()
 async def detect_abuse(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]:
+    if message.chat.type not in ["group","supergroup"]:
+        return
+    if not message.from_user:
+        return
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    member = await bot.get_chat_member(chat_id, user_id)
+    if member.status in ["administrator","creator"]:
         return
 
     text = message.text or message.caption or ""
-    if not text:
-        return
+    if is_abusive(text):
+        try:
+            await bot.delete_message(chat_id, message.message_id)
+            await bot.restrict_chat_member(
+                chat_id,
+                user_id,
+                permissions=types.ChatPermissions(can_send_messages=False)
+            )
+            await message.answer(
+                f"🚫 <b>{message.from_user.first_name}</b> was muted permanently for using abusive or offensive words."
+            )
+        except Exception as e:
+            print(f"Error: {e}")
 
-    bad = contains_abuse(text)
-    if not bad:
-        return
-
-    member = await bot.get_chat_member(message.chat.id, message.from_user.id)
-    if member.status in ["administrator", "creator"]:
-        return
-
-    # Delete the abusive message
-    try:
-        await message.delete()
-    except:
-        pass
-
-    # Permanently mute user
-    try:
-        await bot.restrict_chat_member(
-            message.chat.id,
-            message.from_user.id,
-            permissions=types.ChatPermissions(can_send_messages=False)
-        )
-        await message.answer(
-            f"🚨 <b>{message.from_user.full_name}</b> was muted permanently "
-            f"for abusive language (<code>{bad}</code>)."
-        )
-    except Exception as e:
-        print("Mute failed:", e)
-
-# ===================================================
-# 🚀 START BOT
-# ===================================================
 async def main():
     if not BOT_TOKEN:
-        print("❌ BOT_TOKEN not found in environment!")
+        print("❌ BOT_TOKEN missing in environment variables!")
         return
+    print("🤖 Bot started successfully and watching for abuses...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
