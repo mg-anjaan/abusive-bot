@@ -97,51 +97,54 @@ EMOJI_RE = re.compile(
 
 def normalize_text_for_match(s: str) -> str:
     """
-    Convert any Unicode stylised text to plain ASCII-like text before matching.
-    Steps:
-      1. Decompose & remove combining marks (accents)
-      2. Map mathematical/fullwidth/circled/double-struck letters -> base letters using unicode names
-      3. Translate common homoglyphs (Cyrillic/Greek) and accented Latin to base
-      4. Remove emojis and non-alphanum, lowercase, compress repeats and spaces
+    Extended normalization to handle fancy fonts, fullwidth/circled letters,
+    emojis, accents, and mixed scripts so abuse words are always detected.
     """
     if not s:
         return ""
-    # 1) Unicode decomposition & remove combining marks
+
+    import unicodedata, re
+
+    # Decompose & strip accents
     s = unicodedata.normalize("NFKD", s)
-    s = COMBINING_MARKS_RE.sub("", s)
+    s = re.sub(r'[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff]+', "", s)
 
-    # 2) Map mathematical/fullwidth/circled/double-struck glyphs to ASCII base if possible
-    mapped_chars = []
+    # Map special glyphs that bypass filters
+    extra = {
+        "©": "c","ʋ": "v","ʜ": "h","ᴜ": "u","ᴛ": "t",
+        "ḩ": "h","ů": "u","ŧ": "t","ɩ": "i","ɪ": "i","ɡ": "g",
+        "ℂ": "c","ⓒ": "c","🅲": "c"
+    }
+
+    mapped = []
     for ch in s:
+        if ch in extra:
+            mapped.append(extra[ch])
+            continue
         name = unicodedata.name(ch, "")
-        # If it's a MATHEMATICAL or FULLWIDTH or CIRCLED or DOUBLE-STRUCK letter, try to extract base letter
-        if any(tag in name for tag in ("MATHEMATICAL", "FULLWIDTH", "CIRCLED", "DOUBLE-STRUCK", "SQUARED")):
-            parts = name.split()
-            # often the last token is the letter name e.g. "MATHEMATICAL BOLD CAPITAL A"
-            last = parts[-1] if parts else ""
-            if len(last) == 1 and last.isalpha():
-                mapped_chars.append(last.lower())
-                continue
-            # sometimes last token could be "CAPITAL" with letter before — handle common layouts
-            # fallback to trying to find a single-letter token
-            letter_found = None
-            for token in reversed(parts):
-                if len(token) == 1 and token.isalpha():
-                    letter_found = token.lower()
+        if any(k in name for k in ("MATHEMATICAL","FULLWIDTH","CIRCLED","DOUBLE-STRUCK","SQUARED","PARENTHESIZED")):
+            for token in reversed(name.split()):
+                if len(token)==1 and token.isalpha():
+                    mapped.append(token.lower())
                     break
-            if letter_found:
-                mapped_chars.append(letter_found)
-                continue
-        # else map using HOMOGLYPH_MAP (covers many Cyrillic/accents)
-        mapped_chars.append(HOMOGLYPH_MAP.get(ord(ch), ch))
-    s = "".join(mapped_chars)
+            else:
+                mapped.append(ch)
+        else:
+            mapped.append(ch)
+    s = "".join(mapped)
 
-    # 3) Remove emojis and replace non-alnum with spaces
-    s = EMOJI_RE.sub(" ", s)
+    # Remove emojis & symbols, lowercase, collapse repeats
+    s = re.sub(
+        "[" 
+        "\U0001F300-\U0001F6FF"
+        "\U0001F1E0-\U0001F1FF"
+        "\U00002700-\U000027BF"
+        "\U000024C2-\U0001F251"
+        "]+", " ", s
+    )
     s = s.lower()
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
-    # compress long repeats (keep up to 2 characters, e.g., cooool -> coool -> coo)
     s = re.sub(r"(.)\1{2,}", r"\1\1", s)
     return s
 
