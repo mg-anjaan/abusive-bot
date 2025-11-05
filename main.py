@@ -274,6 +274,72 @@ async def gather_message_text_for_matching(message: types.Message) -> str:
     combined = " ".join([p for p in parts if p])
     return normalize_text_for_match(combined)
 
+# ---------------------- INSTANT USERBOT-COMMAND BLOCKER ----------------------
+import time
+from collections import defaultdict
+
+_user_times = defaultdict(list)
+USERBOT_CMD_TRIGGERS = {"raid", "spam", "ping", "eval", "exec", "repeat", "dox", "flood", "bomb"}
+
+@dp.message()
+async def block_userbot_commands(message: types.Message):
+    if message.chat.type not in ("group", "supergroup"):
+        return
+    if not message.text:
+        return
+
+    # --- skip admins and owner ---
+    try:
+        member = await message.chat.get_member(message.from_user.id)
+        if getattr(member, "status", None) in ("administrator", "creator"):
+            return
+    except Exception:
+        pass
+
+    txt = message.text.strip().lower()
+
+    # --- detect .raid / .spam / etc ---
+    if txt.startswith((".", "/")):
+        cmd = txt[1:].split()[0] if len(txt) > 1 else ""
+        if cmd in USERBOT_CMD_TRIGGERS:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            try:
+                await message.chat.restrict(
+                    message.from_user.id,
+                    permissions=types.ChatPermissions(can_send_messages=False)
+                )
+                await message.answer(
+                    f"⚠️ <b>{message.from_user.first_name}</b> muted for suspicious command ({cmd})."
+                )
+            except Exception:
+                pass
+            return  # stop further handlers
+
+    # --- optional anti-flood: 3+ msgs in 5 sec ---
+    now = time.time()
+    uid = message.from_user.id
+    _user_times[uid] = [t for t in _user_times[uid] if now - t < 5]
+    _user_times[uid].append(now)
+    if len(_user_times[uid]) >= 3:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        try:
+            await message.chat.restrict(
+                uid,
+                permissions=types.ChatPermissions(can_send_messages=False)
+            )
+            await message.answer(
+                f"⚠️ <b>{message.from_user.first_name}</b> muted for rapid messages (possible userbot)."
+            )
+        except Exception:
+            pass
+        _user_times[uid].clear()
+        return
 # ---------------------- MESSAGE HANDLER (preserve existing behavior) ----------------------
 @dp.message()
 async def detect_abuse(message: types.Message):
