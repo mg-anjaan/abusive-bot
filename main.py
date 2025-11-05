@@ -2,12 +2,12 @@ import os
 import re
 import unicodedata
 import asyncio
+import time
+from collections import defaultdict
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
-import time
-from collections import defaultdict
 
 # ---------------------- BOT SETUP ----------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -48,7 +48,7 @@ english_words = [
     "dumbass","retard","piss","douche","milf","boob","ass","booby","breast","naked","deepthroat","suckmy",
     "gay","lesbian","trans","blow","spank","fetish","orgasm","wetdream","masturbate","moan","ejaculate",
     "strip","whack","nipple","cumshot","lick","spitroast","tits","tit","hooker","escort","prostitute",
-    "blowme","wanker","screw","bollocks","piss","bugger","slag","trollop","arse","arsehole","goddamn",
+    "blowme","wanker","screw","bollocks","bugger","slag","trollop","arse","arsehole","goddamn",
     "shithead","horniness"
 ]
 
@@ -68,13 +68,49 @@ phrases = [
 
 # ---------------------- NORMALIZATION ----------------------
 def normalize_text_for_match(s: str) -> str:
+    """Convert any stylized/fancy Unicode abusive word to plain ASCII form."""
     if not s:
         return ""
+
     s = unicodedata.normalize("NFKD", s)
-    s = re.sub(r'[\u0300-\u036f]+', "", s)
-    s = s.lower()
-    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r'[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff]+', "", s)
+
+    EXTRA_CHAR_MAP = {
+        "©": "c", "ʋ": "u", "ʌ": "u", "ν": "u", "ⅴ": "v", "v̇": "v",
+        "ɯ": "m", "ɡ": "g", "ɩ": "i", "ɪ": "i", "ʜ": "h", "ᴜ": "u", "ᴛ": "t", "ᴠ": "v",
+        "ᴡ": "w", "ᴋ": "k", "ḩ": "h", "ů": "u", "ŧ": "t", "ꜱ": "s", "ᴄ": "c", "ᴀ": "a",
+        "ʙ": "b", "ᴅ": "d", "ᴇ": "e", "ꜰ": "f", "ɢ": "g", "ʟ": "l", "ᴍ": "m", "ɴ": "n",
+        "ᴏ": "o", "ᴘ": "p", "ᴊ": "j", "ʀ": "r", "ᴢ": "z", "ʏ": "y"
+    }
+
+    mapped_chars = []
+    for ch in s:
+        if ch in EXTRA_CHAR_MAP:
+            mapped_chars.append(EXTRA_CHAR_MAP[ch])
+            continue
+
+        name = unicodedata.name(ch, "")
+        if any(tag in name for tag in (
+            "MATHEMATICAL", "FULLWIDTH", "CIRCLED", "DOUBLE-STRUCK", "SQUARED", "MONOSPACE", "BOLD", "ITALIC"
+        )):
+            parts = name.split()
+            for token in reversed(parts):
+                if len(token) == 1 and token.isalpha():
+                    mapped_chars.append(token.lower())
+                    break
+            else:
+                mapped_chars.append(" ")
+            continue
+
+        if ord(ch) < 128:
+            mapped_chars.append(ch)
+        else:
+            mapped_chars.append(" ")
+
+    s = "".join(mapped_chars)
+    s = re.sub(r"[^a-z0-9\s]", " ", s.lower())
     s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r"(.)\1{2,}", r"\1\1", s)
     return s
 
 def tolerant_token_pattern(token: str) -> str:
@@ -98,8 +134,7 @@ def tolerant_token_pattern(token: str) -> str:
 def build_pattern(words):
     fragments = []
     for w in words:
-        w = w.strip()
-        if not w:
+        if not w.strip():
             continue
         if " " in w:
             subtokens = [tolerant_token_pattern(tok) for tok in w.split()]
@@ -110,85 +145,75 @@ def build_pattern(words):
     pattern = r"(?<![A-Za-z0-9])(?:" + "|".join(fragments) + r")(?![A-Za-z0-9])"
     return re.compile(pattern, re.IGNORECASE | re.UNICODE)
 
-combined_words = list(hindi_words) + list(english_words)
-combo_words = []
-for prefix in family_prefixes:
-    for core in combined_words:
-        combo = (prefix + " " + core).strip()
-        combo_words.append(combo)
+combined_words = hindi_words + english_words
+combo_words = [f"{prefix} {core}" for prefix in family_prefixes for core in combined_words]
 final_word_list = combined_words + phrases + combo_words
 abuse_pattern = build_pattern(final_word_list)
 
-# ---------------------- MESSAGE AGGREGATION ----------------------
+# ---------------------- MESSAGE TEXT COLLECTOR ----------------------
 async def gather_message_text_for_matching(message: types.Message) -> str:
     parts = []
-    if getattr(message, "text", None):
+    if message.text:
         parts.append(message.text)
-    if getattr(message, "caption", None):
+    if message.caption:
         parts.append(message.caption)
-    combined = " ".join([p for p in parts if p])
+    combined = " ".join(parts)
     return normalize_text_for_match(combined)
 
-# ---------------------- USERBOT COMMAND BLOCKER ----------------------
+# ---------------------- ANTI-SPAM & USERBOT BLOCKER ----------------------
 _user_times = defaultdict(list)
 USERBOT_CMD_TRIGGERS = {"raid","spam","ping","eval","exec","repeat","dox","flood","bomb"}
 
 @dp.message(lambda m: m.text and m.text.startswith((".", "/")))
 async def block_userbot_commands(message: types.Message):
-    if message.chat.type not in ("group", "supergroup"):
+    if message.chat.type not in ("group","supergroup"):
         return
-    if not message.text:
-        return
-
     try:
         member = await message.chat.get_member(message.from_user.id)
-        if getattr(member, "status", None) in ("administrator","creator"):
+        if member.status in ("administrator","creator"):
             return
     except Exception:
         pass
 
     txt = message.text.strip().lower()
-    if txt.startswith((".", "/")):
-        cmd = txt[1:].split()[0] if len(txt) > 1 else ""
-        if cmd in USERBOT_CMD_TRIGGERS:
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            try:
-                await message.chat.restrict(
-                    message.from_user.id,
-                    permissions=types.ChatPermissions(can_send_messages=False)
-                )
-                await message.answer(
-                    f"⚠️ <b>{message.from_user.first_name}</b> muted for suspicious command ({cmd})."
-                )
-            except Exception:
-                pass
-            return
-        # forward .chut etc. to abuse filter
-        return await detect_abuse(message)
+    cmd = txt[1:].split()[0] if len(txt) > 1 else ""
 
-# ---------------------- ABUSE FILTER + FLOOD CONTROL ----------------------
+    if cmd in USERBOT_CMD_TRIGGERS:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        try:
+            await message.chat.restrict(
+                message.from_user.id,
+                permissions=types.ChatPermissions(can_send_messages=False)
+            )
+            await message.answer(
+                f"⚠️ <b>{message.from_user.first_name}</b> muted for suspicious command ({cmd})."
+            )
+        except Exception:
+            pass
+        return
+    return await detect_abuse(message)
+
+# ---------------------- ABUSE DETECTOR ----------------------
 @dp.message()
 async def detect_abuse(message: types.Message):
     if message.chat.type not in ["group","supergroup"]:
         return
-
     text = await gather_message_text_for_matching(message)
     if not text:
         return
-    if not message.from_user or getattr(message.from_user,"is_bot",False):
+    if not message.from_user or message.from_user.is_bot:
         return
 
     try:
         member = await message.chat.get_member(message.from_user.id)
-        if getattr(member,"status",None) in ("administrator","creator"):
+        if member.status in ("administrator","creator"):
             return
     except Exception:
         pass
 
-    # --- Anti-Flood: 3+ messages in 5 seconds ---
     now = time.time()
     uid = message.from_user.id
     _user_times[uid] = [t for t in _user_times[uid] if now - t < 5]
@@ -200,8 +225,7 @@ async def detect_abuse(message: types.Message):
             pass
         try:
             await message.chat.restrict(
-                uid,
-                permissions=types.ChatPermissions(can_send_messages=False)
+                uid, permissions=types.ChatPermissions(can_send_messages=False)
             )
             await message.answer(
                 f"⚠️ <b>{message.from_user.first_name}</b> was muted for flooding (too many messages)."
@@ -211,23 +235,16 @@ async def detect_abuse(message: types.Message):
         _user_times[uid].clear()
         return
 
-    # --- Abuse detection ---
     try:
         if abuse_pattern.search(text):
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            try:
-                await message.chat.restrict(
-                    message.from_user.id,
-                    permissions=types.ChatPermissions(can_send_messages=False)
-                )
-                await message.answer(
-                    f"🚫 <b>{message.from_user.first_name}</b> was muted permanently for using abusive/offensive language."
-                )
-            except Exception:
-                pass
+            await message.delete()
+            await message.chat.restrict(
+                message.from_user.id,
+                permissions=types.ChatPermissions(can_send_messages=False)
+            )
+            await message.answer(
+                f"🚫 <b>{message.from_user.first_name}</b> was muted permanently for using abusive/offensive language."
+            )
     except Exception:
         pass
 
