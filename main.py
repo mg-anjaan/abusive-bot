@@ -32,7 +32,7 @@ async def start_command(message: types.Message):
         "Let's keep the chat peaceful and friendly! 💬✨"
     )
 
-# ---------------------- ABUSIVE WORD LIST ----------------------
+# ---------------------- WORD LISTS ----------------------
 hindi_words = [
     "chutiya","madarchod","bhosdike","lund","gand","gaand","randi","behenchod","betichod","mc","bc",
     "lodu","lavde","harami","kutte","kamina","rakhail","randwa","suar","dogla","saala","tatti","chod",
@@ -53,8 +53,8 @@ english_words = [
 ]
 
 family_prefixes = [
-    "teri", "teri ki", "tera", "tera ki", "teri maa", "teri behen", "teri gf", "teri sister",
-    "teri maa ki", "teri behen ki", "gf", "bf", "mms", "bana", "banaa", "banaya"
+    "teri","teri ki","tera","tera ki","teri maa","teri behen","teri gf","teri sister",
+    "teri maa ki","teri behen ki","gf","bf","mms","bana","banaa","banaya"
 ]
 
 phrases = [
@@ -131,7 +131,7 @@ async def gather_message_text_for_matching(message: types.Message) -> str:
 
 # ---------------------- USERBOT COMMAND BLOCKER ----------------------
 _user_times = defaultdict(list)
-USERBOT_CMD_TRIGGERS = {"raid", "spam", "ping", "eval", "exec", "repeat", "dox", "flood", "bomb"}
+USERBOT_CMD_TRIGGERS = {"raid","spam","ping","eval","exec","repeat","dox","flood","bomb"}
 
 @dp.message(lambda m: m.text and m.text.startswith((".", "/")))
 async def block_userbot_commands(message: types.Message):
@@ -142,7 +142,7 @@ async def block_userbot_commands(message: types.Message):
 
     try:
         member = await message.chat.get_member(message.from_user.id)
-        if getattr(member, "status", None) in ("administrator", "creator"):
+        if getattr(member, "status", None) in ("administrator","creator"):
             return
     except Exception:
         pass
@@ -166,10 +166,29 @@ async def block_userbot_commands(message: types.Message):
             except Exception:
                 pass
             return
-        # forward .chut, .gand, etc. to abuse filter
+        # forward .chut etc. to abuse filter
         return await detect_abuse(message)
 
-    # anti-flood
+# ---------------------- ABUSE FILTER + FLOOD CONTROL ----------------------
+@dp.message()
+async def detect_abuse(message: types.Message):
+    if message.chat.type not in ["group","supergroup"]:
+        return
+
+    text = await gather_message_text_for_matching(message)
+    if not text:
+        return
+    if not message.from_user or getattr(message.from_user,"is_bot",False):
+        return
+
+    try:
+        member = await message.chat.get_member(message.from_user.id)
+        if getattr(member,"status",None) in ("administrator","creator"):
+            return
+    except Exception:
+        pass
+
+    # --- Anti-Flood: 3+ messages in 5 seconds ---
     now = time.time()
     uid = message.from_user.id
     _user_times[uid] = [t for t in _user_times[uid] if now - t < 5]
@@ -185,32 +204,14 @@ async def block_userbot_commands(message: types.Message):
                 permissions=types.ChatPermissions(can_send_messages=False)
             )
             await message.answer(
-                f"⚠️ <b>{message.from_user.first_name}</b> muted for rapid messages (possible userbot)."
+                f"⚠️ <b>{message.from_user.first_name}</b> was muted for flooding (too many messages)."
             )
         except Exception:
             pass
         _user_times[uid].clear()
         return
 
-# ---------------------- ABUSE FILTER ----------------------
-@dp.message()
-async def detect_abuse(message: types.Message):
-    if message.chat.type not in ["group", "supergroup"]:
-        return
-
-    text = await gather_message_text_for_matching(message)
-    if not text:
-        return
-    if not message.from_user or getattr(message.from_user, "is_bot", False):
-        return
-
-    try:
-        member = await message.chat.get_member(message.from_user.id)
-        if getattr(member, "status", None) in ("administrator", "creator"):
-            return
-    except Exception:
-        pass
-
+    # --- Abuse detection ---
     try:
         if abuse_pattern.search(text):
             try:
