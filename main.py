@@ -95,45 +95,88 @@ EMOJI_RE = re.compile(
     flags=re.UNICODE
 )
 
+
 def normalize_text_for_match(s: str) -> str:
     """
-    Extended normalization to handle fancy fonts, fullwidth/circled letters,
-    emojis, accents, and mixed scripts so abuse words are always detected.
+    Stronger normalization that:
+     - decomposes accents
+     - maps many explicit glyph lookalikes (small-caps, circled, fullwidth, special v-like glyphs)
+     - maps MATHEMATICAL/FULLWIDTH/CIRCLED letters via unicode name
+     - falls back to mapping single-letter tokens found in the unicode name
+     - strips emojis/non-alnum and collapses repeats/spaces
     """
     if not s:
         return ""
 
     import unicodedata, re
 
-    # Decompose & strip accents
+    # 1. Decompose & strip combining marks
     s = unicodedata.normalize("NFKD", s)
     s = re.sub(r'[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff]+', "", s)
 
-    # Map special glyphs that bypass filters
-    extra = {
-        "©": "c","ʋ": "v","ʜ": "h","ᴜ": "u","ᴛ": "t",
-        "ḩ": "h","ů": "u","ŧ": "t","ɩ": "i","ɪ": "i","ɡ": "g",
-        "ℂ": "c","ⓒ": "c","🅲": "c"
+    # 2. explicit extra glyph map (extended)
+    EXTRA_CHAR_MAP = {
+        # common ones you already used
+        "©": "c", "ʋ": "v", "ʌ": "v", "ν": "v", "ⅴ": "v", "v̇": "v",
+        "ʋ": "v", "ɯ": "m", "ɡ": "g", "ɩ": "i", "ɪ": "i",
+        "ʜ": "h", "ᴜ": "u", "ᴛ": "t", "ᴠ": "v", "ᴡ": "w", "ᴋ": "k",
+        "ḩ": "h", "ů": "u", "ŧ": "t",
+        "ℂ": "c", "ⓒ": "c", "🅲": "c",
+        # fullwidth and enclosed letters sometimes show up as single-char glyphs
+        "Ａ":"a","Ｂ":"b","Ｃ":"c","Ｄ":"d","Ｅ":"e","Ｆ":"f","Ｇ":"g","Ｈ":"h","Ｉ":"i","Ｊ":"j",
+        "Ｋ":"k","Ｌ":"l","Ｍ":"m","Ｎ":"n","Ｏ":"o","Ｐ":"p","Ｑ":"q","Ｒ":"r","Ｓ":"s","Ｔ":"t",
+        "Ｕ":"u","Ｖ":"v","Ｗ":"w","Ｘ":"x","Ｙ":"y","Ｚ":"z",
+        # smallcaps / stylistic small letters
+        "ᴀ":"a","ʙ":"b","ᴄ":"c","ᴅ":"d","ᴇ":"e","ꜰ":"f","ɢ":"g","ʜ":"h","ɪ":"i","ᴊ":"j",
+        "ᴋ":"k","ʟ":"l","ᴍ":"m","ɴ":"n","ᴏ":"o","ᴘ":"p","ᴙ":"r","ꜱ":"s","ᴛ":"t","ᴜ":"u","ᴠ":"v",
+        # add more single char mappings as discovered
     }
 
-    mapped = []
+    mapped_chars = []
     for ch in s:
-        if ch in extra:
-            mapped.append(extra[ch])
+        # fast explicit map check
+        if ch in EXTRA_CHAR_MAP:
+            mapped_chars.append(EXTRA_CHAR_MAP[ch])
             continue
+
         name = unicodedata.name(ch, "")
-        if any(k in name for k in ("MATHEMATICAL","FULLWIDTH","CIRCLED","DOUBLE-STRUCK","SQUARED","PARENTHESIZED")):
-            for token in reversed(name.split()):
-                if len(token)==1 and token.isalpha():
-                    mapped.append(token.lower())
+
+        # If it's a MATHEMATICAL / FULLWIDTH / CIRCLED / DOUBLE-STRUCK letter, try to extract base
+        if any(tag in name for tag in ("MATHEMATICAL", "FULLWIDTH", "CIRCLED", "DOUBLE-STRUCK", "SQUARED", "PARENTHESIZED")):
+            parts = name.split()
+            # prefer last single-letter token
+            letter_found = None
+            for token in reversed(parts):
+                if len(token) == 1 and token.isalpha():
+                    letter_found = token.lower()
+                    break
+            if letter_found:
+                mapped_chars.append(letter_found)
+                continue
+
+        # fallback: if name contains 'SMALL LETTER' or 'CAPITAL LETTER', try to find single-letter token
+        if "SMALL LETTER" in name or "CAPITAL LETTER" in name or "LETTER" in name:
+            parts = name.split()
+            for token in reversed(parts):
+                if len(token) == 1 and token.isalpha():
+                    mapped_chars.append(token.lower())
                     break
             else:
-                mapped.append(ch)
-        else:
-            mapped.append(ch)
-    s = "".join(mapped)
+                # no single-letter token found; use HOMOGLYPH_MAP via ord->chr if present, else keep char
+                mapped_chars.append(ch)
+            continue
 
-    # Remove emojis & symbols, lowercase, collapse repeats
+        # last fallback: if char is ASCII letter/digit already, keep it
+        if ord(ch) < 128:
+            mapped_chars.append(ch)
+            continue
+
+        # otherwise keep original (will be stripped to non-alnum later)
+        mapped_chars.append(ch)
+
+    s = "".join(mapped_chars)
+
+    # 3. Remove emojis and replace non-alnum with spaces
     s = re.sub(
         "[" 
         "\U0001F300-\U0001F6FF"
@@ -142,12 +185,13 @@ def normalize_text_for_match(s: str) -> str:
         "\U000024C2-\U0001F251"
         "]+", " ", s
     )
+
+    # 4. Lowercase, collapse non-alnum, compress repeats
     s = s.lower()
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     s = re.sub(r"(.)\1{2,}", r"\1\1", s)
     return s
-
 # ---------------------- PATTERN BUILDER (very tolerant) ----------------------
 def tolerant_token_pattern(token: str) -> str:
     r"""Return a regex fragment that matches token even with arbitrary non-word chars,
