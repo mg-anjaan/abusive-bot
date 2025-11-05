@@ -281,7 +281,7 @@ from collections import defaultdict
 _user_times = defaultdict(list)
 USERBOT_CMD_TRIGGERS = {"raid", "spam", "ping", "eval", "exec", "repeat", "dox", "flood", "bomb"}
 
-@dp.message()
+@dp.message(lambda m: m.text and m.text.startswith((".", "/")))
 async def block_userbot_commands(message: types.Message):
     if message.chat.type not in ("group", "supergroup"):
         return
@@ -317,7 +317,8 @@ async def block_userbot_commands(message: types.Message):
             except Exception:
                 pass
             return  # stop further handlers
-
+# if dot command is not in the list (like .chut or .gand) → let abuse filter handle it
+    return await detect_abuse(message)
     # --- optional anti-flood: 3+ msgs in 5 sec ---
     now = time.time()
     uid = message.from_user.id
