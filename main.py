@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery  # ✅ added for button
 
 # ---------------------- BOT SETUP ----------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -68,13 +69,10 @@ phrases = [
 
 # ---------------------- NORMALIZATION ----------------------
 def normalize_text_for_match(s: str) -> str:
-    """Convert any stylized/fancy Unicode abusive word to plain ASCII form."""
     if not s:
         return ""
-
     s = unicodedata.normalize("NFKD", s)
     s = re.sub(r'[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff]+', "", s)
-
     EXTRA_CHAR_MAP = {
         "©": "c", "ʋ": "u", "ʌ": "u", "ν": "u", "ⅴ": "v", "v̇": "v",
         "ɯ": "m", "ɡ": "g", "ɩ": "i", "ɪ": "i", "ʜ": "h", "ᴜ": "u", "ᴛ": "t", "ᴠ": "v",
@@ -82,17 +80,13 @@ def normalize_text_for_match(s: str) -> str:
         "ʙ": "b", "ᴅ": "d", "ᴇ": "e", "ꜰ": "f", "ɢ": "g", "ʟ": "l", "ᴍ": "m", "ɴ": "n",
         "ᴏ": "o", "ᴘ": "p", "ᴊ": "j", "ʀ": "r", "ᴢ": "z", "ʏ": "y"
     }
-
     mapped_chars = []
     for ch in s:
         if ch in EXTRA_CHAR_MAP:
             mapped_chars.append(EXTRA_CHAR_MAP[ch])
             continue
-
         name = unicodedata.name(ch, "")
-        if any(tag in name for tag in (
-            "MATHEMATICAL", "FULLWIDTH", "CIRCLED", "DOUBLE-STRUCK", "SQUARED", "MONOSPACE", "BOLD", "ITALIC"
-        )):
+        if any(tag in name for tag in ("MATHEMATICAL","FULLWIDTH","CIRCLED","DOUBLE-STRUCK","SQUARED","MONOSPACE","BOLD","ITALIC")):
             parts = name.split()
             for token in reversed(parts):
                 if len(token) == 1 and token.isalpha():
@@ -101,12 +95,10 @@ def normalize_text_for_match(s: str) -> str:
             else:
                 mapped_chars.append(" ")
             continue
-
         if ord(ch) < 128:
             mapped_chars.append(ch)
         else:
             mapped_chars.append(" ")
-
     s = "".join(mapped_chars)
     s = re.sub(r"[^a-z0-9\s]", " ", s.lower())
     s = re.sub(r"\s+", " ", s).strip()
@@ -128,8 +120,7 @@ def tolerant_token_pattern(token: str) -> str:
         else:
             parts.append(ch)
             i += 1
-    joined = r"[\W_]*".join(parts)
-    return joined
+    return r"[\W_]*".join(parts)
 
 def build_pattern(words):
     fragments = []
@@ -146,21 +137,16 @@ def build_pattern(words):
     return re.compile(pattern, re.IGNORECASE | re.UNICODE)
 
 combined_words = hindi_words + english_words
-combo_words = [f"{prefix} {core}" for prefix in family_prefixes for core in combined_words]
+combo_words = [f"{p} {c}" for p in family_prefixes for c in combined_words]
 final_word_list = combined_words + phrases + combo_words
 abuse_pattern = build_pattern(final_word_list)
 
-# ---------------------- MESSAGE TEXT COLLECTOR ----------------------
+# ---------------------- HELPERS ----------------------
 async def gather_message_text_for_matching(message: types.Message) -> str:
-    parts = []
-    if message.text:
-        parts.append(message.text)
-    if message.caption:
-        parts.append(message.caption)
-    combined = " ".join(parts)
-    return normalize_text_for_match(combined)
+    text = " ".join(filter(None, [message.text, message.caption]))
+    return normalize_text_for_match(text)
 
-# ---------------------- ANTI-SPAM & USERBOT BLOCKER ----------------------
+# ---------------------- ANTI-SPAM / USERBOT BLOCKER ----------------------
 _user_times = defaultdict(list)
 USERBOT_CMD_TRIGGERS = {"raid","spam","ping","eval","exec","repeat","dox","flood","bomb"}
 
@@ -174,10 +160,8 @@ async def block_userbot_commands(message: types.Message):
             return
     except Exception:
         pass
-
     txt = message.text.strip().lower()
     cmd = txt[1:].split()[0] if len(txt) > 1 else ""
-
     if cmd in USERBOT_CMD_TRIGGERS:
         try:
             await message.delete()
@@ -202,11 +186,8 @@ async def detect_abuse(message: types.Message):
     if message.chat.type not in ["group","supergroup"]:
         return
     text = await gather_message_text_for_matching(message)
-    if not text:
+    if not text or not message.from_user or message.from_user.is_bot:
         return
-    if not message.from_user or message.from_user.is_bot:
-        return
-
     try:
         member = await message.chat.get_member(message.from_user.id)
         if member.status in ("administrator","creator"):
@@ -219,34 +200,60 @@ async def detect_abuse(message: types.Message):
     _user_times[uid] = [t for t in _user_times[uid] if now - t < 5]
     _user_times[uid].append(now)
     if len(_user_times[uid]) >= 3:
-        try:
-            await message.delete()
-        except Exception:
-            pass
-        try:
-            await message.chat.restrict(
-                uid, permissions=types.ChatPermissions(can_send_messages=False)
-            )
-            await message.answer(
-                f"⚠️ <b>{message.from_user.first_name}</b> was muted for flooding (too many messages)."
-            )
-        except Exception:
-            pass
+        await message.delete()
+        await message.chat.restrict(uid, permissions=types.ChatPermissions(can_send_messages=False))
+        await message.answer(f"⚠️ <b>{message.from_user.first_name}</b> was muted for flooding.")
         _user_times[uid].clear()
         return
 
+    if abuse_pattern.search(text):
+        await message.delete()
+        await message.chat.restrict(
+            uid, permissions=types.ChatPermissions(can_send_messages=False)
+        )
+        # ✅ Send mute message with Unmute button
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🔓 Unmute User", callback_data=f"unmute_{uid}")]]
+        )
+        await message.answer(
+            f"🚫 <b>{message.from_user.first_name}</b> was muted permanently for using abusive/offensive language.",
+            reply_markup=keyboard
+        )
+
+# ---------------------- UNMUTE BUTTON HANDLER ----------------------
+@dp.callback_query(lambda c: c.data and c.data.startswith("unmute_"))
+async def handle_unmute_button(callback: CallbackQuery):
+    user_id = int(callback.data.split("_")[1])
+    chat = callback.message.chat
     try:
-        if abuse_pattern.search(text):
-            await message.delete()
-            await message.chat.restrict(
-                message.from_user.id,
-                permissions=types.ChatPermissions(can_send_messages=False)
-            )
-            await message.answer(
-                f"🚫 <b>{message.from_user.first_name}</b> was muted permanently for using abusive/offensive language."
-            )
+        member = await chat.get_member(callback.from_user.id)
+        if member.status not in ("administrator","creator"):
+            await callback.answer("❌ Only admins can unmute users.", show_alert=True)
+            return
     except Exception:
-        pass
+        await callback.answer("⚠️ Could not verify admin status.", show_alert=True)
+        return
+
+    try:
+        await chat.restrict(
+            user_id,
+            permissions=types.ChatPermissions(
+                can_send_messages=True,
+                can_send_media_messages=True,
+                can_send_polls=True,
+                can_send_other_messages=True,
+                can_add_web_page_previews=True,
+                can_invite_users=True,
+                can_change_info=False,
+                can_pin_messages=False
+            )
+        )
+        await callback.message.reply(
+            f"✅ <b>User has been unmuted by {callback.from_user.first_name}.</b>"
+        )
+        await callback.answer("User unmuted ✅")
+    except Exception as e:
+        await callback.answer(f"⚠️ Failed to unmute: {e}", show_alert=True)
 
 # ---------------------- RUN BOT ----------------------
 async def main():
