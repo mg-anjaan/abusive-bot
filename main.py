@@ -6,6 +6,8 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
+import time
+from collections import defaultdict
 
 # ---------------------- BOT SETUP ----------------------
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -30,7 +32,7 @@ async def start_command(message: types.Message):
         "Let's keep the chat peaceful and friendly! 💬✨"
     )
 
-# ---------------------- ABUSIVE WORD LIST (preserved) ----------------------
+# ---------------------- ABUSIVE WORD LIST ----------------------
 hindi_words = [
     "chutiya","madarchod","bhosdike","lund","gand","gaand","randi","behenchod","betichod","mc","bc",
     "lodu","lavde","harami","kutte","kamina","rakhail","randwa","suar","dogla","saala","tatti","chod",
@@ -50,13 +52,11 @@ english_words = [
     "shithead","horniness"
 ]
 
-# Add family-targeted prefixes/phrases that often appear together with slurs
 family_prefixes = [
     "teri", "teri ki", "tera", "tera ki", "teri maa", "teri behen", "teri gf", "teri sister",
     "teri maa ki", "teri behen ki", "gf", "bf", "mms", "bana", "banaa", "banaya"
 ]
 
-# ---------------------- PHRASE DETECTION LIST ----------------------
 phrases = [
     "send nudes","horny dm","let's have sex","i am horny","want to fuck",
     "boobs pics","let’s bang","video call nude","send pic without cloth",
@@ -66,157 +66,32 @@ phrases = [
     "send xxx","share porn","watch porn together","send your nude"
 ]
 
-# ---------------------- NORMALIZATION HELPERS (robust) ----------------------
-# A map for common homoglyphs & accented letters -> base latin
-HOMOGLYPH_MAP = {
-    ord("а"): "a", ord("А"): "a", ord("б"): "b", ord("Б"): "b", ord("в"): "v", ord("В"): "v",
-    ord("е"): "e", ord("Е"): "e", ord("о"): "o", ord("О"): "o", ord("с"): "c", ord("С"): "c",
-    ord("р"): "p", ord("Р"): "p", ord("у"): "y", ord("У"): "y", ord("х"): "x", ord("Х"): "x",
-    ord("ι"): "i", ord("Ι"): "i", ord("ν"): "v", ord("Ν"): "v", ord("μ"): "m", ord("Μ"): "m",
-    ord("т"): "t", ord("Т"): "t",
-    # Latin accented letters to base
-    ord("á"): "a", ord("à"): "a", ord("â"): "a", ord("ä"): "a", ord("ã"): "a",
-    ord("é"): "e", ord("è"): "e", ord("ë"): "e", ord("ê"): "e",
-    ord("í"): "i", ord("ì"): "i", ord("ï"): "i", ord("î"): "i",
-    ord("ó"): "o", ord("ò"): "o", ord("ö"): "o", ord("ô"): "o",
-    ord("ú"): "u", ord("ù"): "u", ord("ü"): "u", ord("û"): "u",
-    ord("ñ"): "n", ord("ç"): "c", ord("ß"): "ss"
-}
-
-# Regex to remove combining marks (accents) and emoji blocks
-COMBINING_MARKS_RE = re.compile(r'[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff]+', flags=re.UNICODE)
-EMOJI_RE = re.compile(
-    "[" 
-    "\U0001F300-\U0001F6FF"  # transport & map symbols
-    "\U0001F1E0-\U0001F1FF"  # flags
-    "\U00002700-\U000027BF"
-    "\U000024C2-\U0001F251"
-    "]+",
-    flags=re.UNICODE
-)
-
-
+# ---------------------- NORMALIZATION ----------------------
 def normalize_text_for_match(s: str) -> str:
-    """
-    Stronger normalization that:
-     - decomposes accents
-     - maps many explicit glyph lookalikes (small-caps, circled, fullwidth, special v-like glyphs)
-     - maps MATHEMATICAL/FULLWIDTH/CIRCLED letters via unicode name
-     - falls back to mapping single-letter tokens found in the unicode name
-     - strips emojis/non-alnum and collapses repeats/spaces
-    """
     if not s:
         return ""
-
-    import unicodedata, re
-
-    # 1. Decompose & strip combining marks
     s = unicodedata.normalize("NFKD", s)
-    s = re.sub(r'[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff]+', "", s)
-
-    # 2. explicit extra glyph map (extended)
-    EXTRA_CHAR_MAP = {
-        # common ones you already used
-        "©": "c", "ʋ": "v", "ʌ": "v", "ν": "v", "ⅴ": "v", "v̇": "v",
-        "ʋ": "v", "ɯ": "m", "ɡ": "g", "ɩ": "i", "ɪ": "i","ʋ": "u",
-        "ʜ": "h", "ᴜ": "u", "ᴛ": "t", "ᴠ": "v", "ᴡ": "w", "ᴋ": "k",
-        "ḩ": "h", "ů": "u", "ŧ": "t",
-        "ℂ": "c", "ⓒ": "c", "🅲": "c",
-        # fullwidth and enclosed letters sometimes show up as single-char glyphs
-        "Ａ":"a","Ｂ":"b","Ｃ":"c","Ｄ":"d","Ｅ":"e","Ｆ":"f","Ｇ":"g","Ｈ":"h","Ｉ":"i","Ｊ":"j",
-        "Ｋ":"k","Ｌ":"l","Ｍ":"m","Ｎ":"n","Ｏ":"o","Ｐ":"p","Ｑ":"q","Ｒ":"r","Ｓ":"s","Ｔ":"t",
-        "Ｕ":"u","Ｖ":"v","Ｗ":"w","Ｘ":"x","Ｙ":"y","Ｚ":"z",
-        # smallcaps / stylistic small letters
-        "ᴀ":"a","ʙ":"b","ᴄ":"c","ᴅ":"d","ᴇ":"e","ꜰ":"f","ɢ":"g","ʜ":"h","ɪ":"i","ᴊ":"j",
-        "ᴋ":"k","ʟ":"l","ᴍ":"m","ɴ":"n","ᴏ":"o","ᴘ":"p","ᴙ":"r","ꜱ":"s","ᴛ":"t","ᴜ":"u","ᴠ":"v",
-        # add more single char mappings as discovered
-    }
-
-    mapped_chars = []
-    for ch in s:
-        # fast explicit map check
-        if ch in EXTRA_CHAR_MAP:
-            mapped_chars.append(EXTRA_CHAR_MAP[ch])
-            continue
-
-        name = unicodedata.name(ch, "")
-
-        # If it's a MATHEMATICAL / FULLWIDTH / CIRCLED / DOUBLE-STRUCK letter, try to extract base
-        if any(tag in name for tag in ("MATHEMATICAL", "FULLWIDTH", "CIRCLED", "DOUBLE-STRUCK", "SQUARED", "PARENTHESIZED")):
-            parts = name.split()
-            # prefer last single-letter token
-            letter_found = None
-            for token in reversed(parts):
-                if len(token) == 1 and token.isalpha():
-                    letter_found = token.lower()
-                    break
-            if letter_found:
-                mapped_chars.append(letter_found)
-                continue
-
-        # fallback: if name contains 'SMALL LETTER' or 'CAPITAL LETTER', try to find single-letter token
-        if "SMALL LETTER" in name or "CAPITAL LETTER" in name or "LETTER" in name:
-            parts = name.split()
-            for token in reversed(parts):
-                if len(token) == 1 and token.isalpha():
-                    mapped_chars.append(token.lower())
-                    break
-            else:
-                # no single-letter token found; use HOMOGLYPH_MAP via ord->chr if present, else keep char
-                mapped_chars.append(ch)
-            continue
-
-        # last fallback: if char is ASCII letter/digit already, keep it
-        if ord(ch) < 128:
-            mapped_chars.append(ch)
-            continue
-
-        # otherwise keep original (will be stripped to non-alnum later)
-        mapped_chars.append(ch)
-
-    s = "".join(mapped_chars)
-
-    # 3. Remove emojis and replace non-alnum with spaces
-    s = re.sub(
-        "[" 
-        "\U0001F300-\U0001F6FF"
-        "\U0001F1E0-\U0001F1FF"
-        "\U00002700-\U000027BF"
-        "\U000024C2-\U0001F251"
-        "]+", " ", s
-    )
-
-    # 4. Lowercase, collapse non-alnum, compress repeats
+    s = re.sub(r'[\u0300-\u036f]+', "", s)
     s = s.lower()
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
-    s = re.sub(r"(.)\1{2,}", r"\1\1", s)
     return s
-# ---------------------- PATTERN BUILDER (very tolerant) ----------------------
+
 def tolerant_token_pattern(token: str) -> str:
-    r"""Return a regex fragment that matches token even with arbitrary non-word chars,
-       spaces, emojis, or inserted glyphs between letters.
-       Approach: insert [\W_]* between every letter/digit so that obfuscation won't break it.
-       (raw docstring prevents SyntaxWarning on '\W')
-    """
     token = token.strip().lower()
     if not token:
         return ""
-    # escape token for regex
     escaped = re.escape(token)
-    # split escaped into units keeping escape sequences intact
     parts = []
     i = 0
     while i < len(escaped):
         ch = escaped[i]
         if ch == "\\" and i + 1 < len(escaped):
-            # keep backslash + next char together as a unit (e.g., \ )
             parts.append(escaped[i:i+2])
             i += 2
         else:
             parts.append(ch)
             i += 1
-    # insert flexible separator to tolerate inserted non-word chars between any units
     joined = r"[\W_]*".join(parts)
     return joined
 
@@ -232,15 +107,9 @@ def build_pattern(words):
         else:
             frag = tolerant_token_pattern(w)
         fragments.append(frag)
-    # final regex: require not alnum immediately before/after to avoid matching inside other words
     pattern = r"(?<![A-Za-z0-9])(?:" + "|".join(fragments) + r")(?![A-Za-z0-9])"
-    try:
-        return re.compile(pattern, re.IGNORECASE | re.UNICODE)
-    except re.error:
-        # fallback: simpler OR-joined escaped pattern
-        return re.compile(r"(?:" + "|".join(re.escape(w) for w in words if w) + r")", re.IGNORECASE)
+    return re.compile(pattern, re.IGNORECASE | re.UNICODE)
 
-# Build combined abusive/phrase patterns using the tolerant builder
 combined_words = list(hindi_words) + list(english_words)
 combo_words = []
 for prefix in family_prefixes:
@@ -250,34 +119,17 @@ for prefix in family_prefixes:
 final_word_list = combined_words + phrases + combo_words
 abuse_pattern = build_pattern(final_word_list)
 
-# ---------------------- MESSAGE TEXT AGGREGATION ----------------------
+# ---------------------- MESSAGE AGGREGATION ----------------------
 async def gather_message_text_for_matching(message: types.Message) -> str:
     parts = []
     if getattr(message, "text", None):
         parts.append(message.text)
     if getattr(message, "caption", None):
         parts.append(message.caption)
-    if getattr(message, "forward_signature", None):
-        parts.append(message.forward_signature)
-    if getattr(message, "forward_from", None):
-        try:
-            ff = message.forward_from
-            parts.append(" ".join(filter(None, [getattr(ff, "first_name", ""), getattr(ff, "last_name", "")])))
-        except Exception:
-            pass
-    if getattr(message, "reply_to_message", None):
-        rt = message.reply_to_message
-        if getattr(rt, "text", None):
-            parts.append(rt.text)
-        if getattr(rt, "caption", None):
-            parts.append(rt.caption)
     combined = " ".join([p for p in parts if p])
     return normalize_text_for_match(combined)
 
-# ---------------------- INSTANT USERBOT-COMMAND BLOCKER ----------------------
-import time
-from collections import defaultdict
-
+# ---------------------- USERBOT COMMAND BLOCKER ----------------------
 _user_times = defaultdict(list)
 USERBOT_CMD_TRIGGERS = {"raid", "spam", "ping", "eval", "exec", "repeat", "dox", "flood", "bomb"}
 
@@ -288,7 +140,6 @@ async def block_userbot_commands(message: types.Message):
     if not message.text:
         return
 
-    # --- skip admins and owner ---
     try:
         member = await message.chat.get_member(message.from_user.id)
         if getattr(member, "status", None) in ("administrator", "creator"):
@@ -297,8 +148,6 @@ async def block_userbot_commands(message: types.Message):
         pass
 
     txt = message.text.strip().lower()
-
-    # --- detect .raid / .spam / etc ---
     if txt.startswith((".", "/")):
         cmd = txt[1:].split()[0] if len(txt) > 1 else ""
         if cmd in USERBOT_CMD_TRIGGERS:
@@ -316,10 +165,11 @@ async def block_userbot_commands(message: types.Message):
                 )
             except Exception:
                 pass
-            return  # stop further handlers
-# if dot command is not in the list (like .chut or .gand) → let abuse filter handle it
-    return await detect_abuse(message)
-    # --- optional anti-flood: 3+ msgs in 5 sec ---
+            return
+        # forward .chut, .gand, etc. to abuse filter
+        return await detect_abuse(message)
+
+    # anti-flood
     now = time.time()
     uid = message.from_user.id
     _user_times[uid] = [t for t in _user_times[uid] if now - t < 5]
@@ -341,39 +191,32 @@ async def block_userbot_commands(message: types.Message):
             pass
         _user_times[uid].clear()
         return
-# ---------------------- MESSAGE HANDLER (preserve existing behavior) ----------------------
+
+# ---------------------- ABUSE FILTER ----------------------
 @dp.message()
 async def detect_abuse(message: types.Message):
-    # only groups/supergroups
     if message.chat.type not in ["group", "supergroup"]:
         return
 
-    # gather and normalize text
     text = await gather_message_text_for_matching(message)
     if not text:
         return
-
-    # skip if no sender or sender is a bot
     if not message.from_user or getattr(message.from_user, "is_bot", False):
         return
 
-    # skip admins/creators exactly like before
     try:
         member = await message.chat.get_member(message.from_user.id)
         if getattr(member, "status", None) in ("administrator", "creator"):
             return
     except Exception:
-        # mirrored behavior: continue if fetch fails (like your original)
         pass
 
-    # final detection & preserve delete + permanent mute + reply behavior
     try:
         if abuse_pattern.search(text):
             try:
                 await message.delete()
             except Exception:
                 pass
-
             try:
                 await message.chat.restrict(
                     message.from_user.id,
@@ -385,7 +228,6 @@ async def detect_abuse(message: types.Message):
             except Exception:
                 pass
     except Exception:
-        # fail-safe: do not crash bot on unexpected regex/runtime issues
         pass
 
 # ---------------------- RUN BOT ----------------------
