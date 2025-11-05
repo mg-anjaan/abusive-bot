@@ -30,7 +30,7 @@ async def start_command(message: types.Message):
         "Let's keep the chat peaceful and friendly! 💬✨"
     )
 
-# ---------------------- ABUSIVE WORD LIST (preserved + can be expanded) ----------------------
+# ---------------------- ABUSIVE WORD LIST (preserved) ----------------------
 hindi_words = [
     "chutiya","madarchod","bhosdike","lund","gand","gaand","randi","behenchod","betichod","mc","bc",
     "lodu","lavde","harami","kutte","kamina","rakhail","randwa","suar","dogla","saala","tatti","chod",
@@ -51,7 +51,6 @@ english_words = [
 ]
 
 # Add family-targeted prefixes/phrases that often appear together with slurs
-# These will be combined during matching to catch "teri maa ki ..." style patterns.
 family_prefixes = [
     "teri", "teri ki", "tera", "tera ki", "teri maa", "teri behen", "teri gf", "teri sister",
     "teri maa ki", "teri behen ki", "gf", "bf", "mms", "bana", "banaa", "banaya"
@@ -67,13 +66,14 @@ phrases = [
     "send xxx","share porn","watch porn together","send your nude"
 ]
 
-# ---------------------- NORMALIZATION HELPERS ----------------------
-# A map to normalize common homoglyphs (Cyrillic/accents → Latin)
+# ---------------------- NORMALIZATION HELPERS (robust) ----------------------
+# A map for common homoglyphs & accented letters -> base latin
 HOMOGLYPH_MAP = {
-    # Cyrillic to latin
-    ord("а"): "a", ord("е"): "e", ord("о"): "o", ord("і"): "i", ord("ѕ"): "s",
-    ord("р"): "p", ord("с"): "c", ord("у"): "y", ord("х"): "x", ord("м"): "m",
-    ord("к"): "k", ord("т"): "t", ord("б"): "b",
+    ord("а"): "a", ord("А"): "a", ord("б"): "b", ord("Б"): "b", ord("в"): "v", ord("В"): "v",
+    ord("е"): "e", ord("Е"): "e", ord("о"): "o", ord("О"): "o", ord("с"): "c", ord("С"): "c",
+    ord("р"): "p", ord("Р"): "p", ord("у"): "y", ord("У"): "y", ord("х"): "x", ord("Х"): "x",
+    ord("ι"): "i", ord("Ι"): "i", ord("ν"): "v", ord("Ν"): "v", ord("μ"): "m", ord("Μ"): "m",
+    ord("т"): "t", ord("Т"): "t",
     # Latin accented letters to base
     ord("á"): "a", ord("à"): "a", ord("â"): "a", ord("ä"): "a", ord("ã"): "a",
     ord("é"): "e", ord("è"): "e", ord("ë"): "e", ord("ê"): "e",
@@ -83,7 +83,7 @@ HOMOGLYPH_MAP = {
     ord("ñ"): "n", ord("ç"): "c", ord("ß"): "ss"
 }
 
-# regex to remove combining marks (accents) and many symbol emojis
+# Regex to remove combining marks (accents) and emoji blocks
 COMBINING_MARKS_RE = re.compile(r'[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff]+', flags=re.UNICODE)
 EMOJI_RE = re.compile(
     "[" 
@@ -96,59 +96,80 @@ EMOJI_RE = re.compile(
 )
 
 def normalize_text_for_match(s: str) -> str:
-    """Normalize incoming text to a simplified latin-only, lowercased form.
-       Removes emojis, combining marks, maps homoglyphs, replaces non-alnum with spaces,
-       compresses repeated characters, and trims.
+    """
+    Convert any Unicode stylised text to plain ASCII-like text before matching.
+    Steps:
+      1. Decompose & remove combining marks (accents)
+      2. Map mathematical/fullwidth/circled/double-struck letters -> base letters using unicode names
+      3. Translate common homoglyphs (Cyrillic/Greek) and accented Latin to base
+      4. Remove emojis and non-alphanum, lowercase, compress repeats and spaces
     """
     if not s:
         return ""
-    # Unicode normalization
+    # 1) Unicode decomposition & remove combining marks
     s = unicodedata.normalize("NFKD", s)
-    # Remove combining marks
     s = COMBINING_MARKS_RE.sub("", s)
-    # Map homoglyphs and accented chars to latin base
-    s = s.translate(HOMOGLYPH_MAP)
-    # Lowercase
-    s = s.lower()
-    # Remove emojis
+
+    # 2) Map mathematical/fullwidth/circled/double-struck glyphs to ASCII base if possible
+    mapped_chars = []
+    for ch in s:
+        name = unicodedata.name(ch, "")
+        # If it's a MATHEMATICAL or FULLWIDTH or CIRCLED or DOUBLE-STRUCK letter, try to extract base letter
+        if any(tag in name for tag in ("MATHEMATICAL", "FULLWIDTH", "CIRCLED", "DOUBLE-STRUCK", "SQUARED")):
+            parts = name.split()
+            # often the last token is the letter name e.g. "MATHEMATICAL BOLD CAPITAL A"
+            last = parts[-1] if parts else ""
+            if len(last) == 1 and last.isalpha():
+                mapped_chars.append(last.lower())
+                continue
+            # sometimes last token could be "CAPITAL" with letter before — handle common layouts
+            # fallback to trying to find a single-letter token
+            letter_found = None
+            for token in reversed(parts):
+                if len(token) == 1 and token.isalpha():
+                    letter_found = token.lower()
+                    break
+            if letter_found:
+                mapped_chars.append(letter_found)
+                continue
+        # else map using HOMOGLYPH_MAP (covers many Cyrillic/accents)
+        mapped_chars.append(HOMOGLYPH_MAP.get(ord(ch), ch))
+    s = "".join(mapped_chars)
+
+    # 3) Remove emojis and replace non-alnum with spaces
     s = EMOJI_RE.sub(" ", s)
-    # Replace any character that's not a-z or 0-9 with a space
+    s = s.lower()
     s = re.sub(r"[^a-z0-9\s]", " ", s)
-    # Collapse many spaces
     s = re.sub(r"\s+", " ", s).strip()
-    # Reduce long repeated sequences of the same character (keep up to 2)
+    # compress long repeats (keep up to 2 characters, e.g., cooool -> coool -> coo)
     s = re.sub(r"(.)\1{2,}", r"\1\1", s)
     return s
 
 # ---------------------- PATTERN BUILDER (very tolerant) ----------------------
 def tolerant_token_pattern(token: str) -> str:
-    """Return a regex fragment that matches token even with arbitrary non-word chars,
+    r"""Return a regex fragment that matches token even with arbitrary non-word chars,
        spaces, emojis, or inserted glyphs between letters.
        Approach: insert [\W_]* between every letter/digit so that obfuscation won't break it.
+       (raw docstring prevents SyntaxWarning on '\W')
     """
     token = token.strip().lower()
-    # escape token for regex, but we will insert flexible separators between characters
+    if not token:
+        return ""
+    # escape token for regex
     escaped = re.escape(token)
-    # Insert flexible separator after each escaped char (handles multichar escapes too)
-    # We'll treat the escaped string as sequence of characters to interleave [\W_]* between letters/digits.
+    # split escaped into units keeping escape sequences intact
     parts = []
     i = 0
     while i < len(escaped):
         ch = escaped[i]
-        # handle escaped sequences like \uXXXX or \x.. or \.
-        if ch == "\\":
-            # take backslash and the next char as a unit
-            if i + 1 < len(escaped):
-                unit = escaped[i:i+2]
-                parts.append(unit)
-                i += 2
-            else:
-                parts.append(ch)
-                i += 1
+        if ch == "\\" and i + 1 < len(escaped):
+            # keep backslash + next char together as a unit (e.g., \ )
+            parts.append(escaped[i:i+2])
+            i += 2
         else:
             parts.append(ch)
             i += 1
-    # Build pattern: after each unit allow arbitrary non-word separators [\W_]* (this also allows spaces, emojis removed earlier)
+    # insert flexible separator to tolerate inserted non-word chars between any units
     joined = r"[\W_]*".join(parts)
     return joined
 
@@ -158,49 +179,37 @@ def build_pattern(words):
         w = w.strip()
         if not w:
             continue
-        # For multi-word phrases, allow arbitrary separators between words too
         if " " in w:
-            # split and build tolerant fragments for each subtoken, allow separators between
             subtokens = [tolerant_token_pattern(tok) for tok in w.split()]
             frag = r"[\W_]*".join(subtokens)
         else:
             frag = tolerant_token_pattern(w)
         fragments.append(frag)
-    # create final regex. Use lookarounds to avoid matching inside larger alphanumeric words,
-    # but since we allow separators between letters, require not alnum immediately before/after (or start/end)
+    # final regex: require not alnum immediately before/after to avoid matching inside other words
     pattern = r"(?<![A-Za-z0-9])(?:" + "|".join(fragments) + r")(?![A-Za-z0-9])"
     try:
         return re.compile(pattern, re.IGNORECASE | re.UNICODE)
     except re.error:
-        # fallback to a simpler OR-joined escaped pattern if compilation fails for some reason
+        # fallback: simpler OR-joined escaped pattern
         return re.compile(r"(?:" + "|".join(re.escape(w) for w in words if w) + r")", re.IGNORECASE)
 
 # Build combined abusive/phrase patterns using the tolerant builder
-# Keep original lists untouched, but also add family prefix combinations to catch "teri maa ki chut" etc.
 combined_words = list(hindi_words) + list(english_words)
-
-# also create phrase-like combos: e.g. "teri maa ki" + abusive_word -> many combos
 combo_words = []
 for prefix in family_prefixes:
     for core in combined_words:
         combo = (prefix + " " + core).strip()
         combo_words.append(combo)
-
-# Final word list to compile: original words + phrases + prefix combos + explicit phrases
 final_word_list = combined_words + phrases + combo_words
-
 abuse_pattern = build_pattern(final_word_list)
 
 # ---------------------- MESSAGE TEXT AGGREGATION ----------------------
 async def gather_message_text_for_matching(message: types.Message) -> str:
     parts = []
-    # text
     if getattr(message, "text", None):
         parts.append(message.text)
-    # caption (media)
     if getattr(message, "caption", None):
         parts.append(message.caption)
-    # forward signature or forward_from names
     if getattr(message, "forward_signature", None):
         parts.append(message.forward_signature)
     if getattr(message, "forward_from", None):
@@ -209,7 +218,6 @@ async def gather_message_text_for_matching(message: types.Message) -> str:
             parts.append(" ".join(filter(None, [getattr(ff, "first_name", ""), getattr(ff, "last_name", "")])))
         except Exception:
             pass
-    # reply/quoted message content
     if getattr(message, "reply_to_message", None):
         rt = message.reply_to_message
         if getattr(rt, "text", None):
@@ -222,40 +230,36 @@ async def gather_message_text_for_matching(message: types.Message) -> str:
 # ---------------------- MESSAGE HANDLER (preserve existing behavior) ----------------------
 @dp.message()
 async def detect_abuse(message: types.Message):
-    # only act in groups/supergroups
+    # only groups/supergroups
     if message.chat.type not in ["group", "supergroup"]:
         return
 
-    # gather text from all fields and normalize
+    # gather and normalize text
     text = await gather_message_text_for_matching(message)
     if not text:
         return
 
-    # Skip if message has no sender or is a bot
+    # skip if no sender or sender is a bot
     if not message.from_user or getattr(message.from_user, "is_bot", False):
         return
 
-    # Skip admins/creators — keep original behavior
+    # skip admins/creators exactly like before
     try:
         member = await message.chat.get_member(message.from_user.id)
         if getattr(member, "status", None) in ("administrator", "creator"):
             return
     except Exception:
-        # If fetching member fails, do not crash — continue to check (this mirrors your old logic)
-        # but if you prefer to skip when fetch fails, uncomment the next line:
-        # return
+        # mirrored behavior: continue if fetch fails (like your original)
         pass
 
-    # Final detection using the tolerant compiled pattern
+    # final detection & preserve delete + permanent mute + reply behavior
     try:
         if abuse_pattern.search(text):
-            # attempt to delete (preserve your original behavior)
             try:
                 await message.delete()
             except Exception:
                 pass
 
-            # permanent mute as before
             try:
                 await message.chat.restrict(
                     message.from_user.id,
@@ -267,7 +271,7 @@ async def detect_abuse(message: types.Message):
             except Exception:
                 pass
     except Exception:
-        # If something unexpected happens during matching, fail silently to avoid crashing bot
+        # fail-safe: do not crash bot on unexpected regex/runtime issues
         pass
 
 # ---------------------- RUN BOT ----------------------
